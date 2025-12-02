@@ -15,11 +15,9 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  # list all the docker file in your repository here and reference the parent/main branch
-
   SERVICES: backend,transactions,studentportfolio,syncer
   TARGET_BRANCH: main
- # Declaring the jobs that we want our runner to run. We want it to build and push the images to our gitops repo
+
 jobs:
   build-and-push:
     name: Build & Push Images
@@ -48,7 +46,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.repository_owner }}
+          username: mowmitayasmin
           password: ${{ secrets.CR_PAT }}
 
       - name: Set up Docker Buildx
@@ -62,8 +60,8 @@ jobs:
           context: ./${{ matrix.service }}
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ github.event.repository.name }}-${{ matrix.service }}:latest
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ github.event.repository.name }}-${{ matrix.service }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/mowmitayasmin/module_6_part3-${{ matrix.service }}:latest
+            ${{ env.REGISTRY }}/mowmitayasmin/module_6_part3-${{ matrix.service }}:${{ github.sha }}
           provenance: false
           sbom: false
 
@@ -81,9 +79,9 @@ jobs:
         shell: bash
         env:
           REGISTRY: ${{ env.REGISTRY }}
-          OWNER: ${{ github.repository_owner }}
-          APP_REPO: ${{ github.event.repository.name }}
-          GITOPS_REPO: ${{ secrets.GITOPS_REPO }}   # e.g., "yourname/your-gitops-repo"
+          OWNER: mowmitayasmin
+          APP_REPO: module_6_part3
+          GITOPS_REPO: ${{ secrets.GITOPS_REPO }}   # e.g., "mowmitayasmin/module_6_part3gitops"
           GIT_TOKEN: ${{ secrets.GITOPS_PAT }}      # PAT with repo scope
           TARGET_BRANCH: ${{ env.TARGET_BRANCH }}
         run: |
@@ -119,7 +117,7 @@ jobs:
             fi
           fi
 
-          # ---- Bring over k8s manifests (first run will seed an empty repo)
+          # ---- Bring over k8s manifests
           if [ ! -d "${GITHUB_WORKSPACE}/k8s" ]; then
             echo "::warning:: No k8s/ directory found in app repo; nothing to copy."
             mkdir -p k8s
@@ -132,32 +130,16 @@ jobs:
               cp -R "${GITHUB_WORKSPACE}/k8s/." "./k8s/"
             fi
           fi
-          
-                    # Normalize any placeholders to the real owner/repo once
+
+          # ---- Update image references in deployment files
           find k8s -type f -name "*deployment*.yaml" -print0 | xargs -0 sed -i -E \
             "s|image:\s*ghcr\.io/OWNER/REPO-([a-z0-9._-]+):[^[:space:]]+|image: ${REGISTRY}/${OWNER}/${APP_REPO}-\1:latest|g"
-
-          # Strip trailing spaces (and Windows CRs) on image lines
           find k8s -type f -name "*deployment*.yaml" -print0 | xargs -0 sed -i 's/\r$//; s/[[:space:]]\+$//'
 
-          # Bump tags to current SHA
           while IFS= read -r -d '' f; do
             sed -i -E "s|(image:\s*${REGISTRY}/${OWNER}/${APP_REPO}-[a-z0-9._-]+:)[^[:space:]]+|\1${GITHUB_SHA}|g" "$f"
           done < <(find k8s -type f -name "*deployment*.yaml" -print0)
 
-          # ---- Bump image tags in ALL *deployment*.yaml files to the current commit SHA
-          # Matches: image: ghcr.io/OWNER/APP_REPO-<service>:<anything>  -> set tag to $GITHUB_SHA
-          shopt -s nullglob
-          mapfile -d '' files < <(find k8s -type f -name "*deployment*.yaml" -print0)
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "::warning:: No deployment YAMLs found under k8s/. Skipping tag bump."
-          else
-            for f in "${files[@]}"; do
-              sed -i -E "s|(image:\s*${REGISTRY}/${OWNER}/${APP_REPO}-[a-z0-9._-]+:)[^[:space:]]+|\\1${GITHUB_SHA}|g" "$f"
-            done
-          fi
-
-          # ---- Commit (if needed) and push
           git add -A
           if git diff --cached --quiet; then
             echo "No changes to commit."
